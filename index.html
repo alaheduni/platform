@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>منصة العهد</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#17262F;--mut:#5B6B73;--bg:#EEF2F3;--card:#fff;--line:#D5DDE0;--pri:#1E5B58;--pri2:#E3EFEE;--warn:#8A5200;--warn2:#FBEBCF;--bad:#A23B3B;--bad2:#F8E1E1}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 'IBM Plex Sans Arabic',Tahoma,sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding:16px}.narrow{max-width:420px;margin-top:8vh}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 0 14px}
+h1{font-size:1.35rem;margin:0}h2{font-size:1.1rem;margin:0 0 6px}
+.tabs{display:flex;gap:4px;border-bottom:2px solid var(--line);margin-bottom:16px;overflow-x:auto}
+.tab{background:none;border:0;padding:10px 16px;font:inherit;color:var(--mut);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;white-space:nowrap}
+.tab[aria-selected=true]{color:var(--pri);border-color:var(--pri);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>div{flex:1;min-width:140px}.between{justify-content:space-between}
+.btn{font:inherit;border:1px solid var(--pri);background:var(--pri);color:#fff;border-radius:8px;padding:7px 16px;cursor:pointer}
+.btn.ghost{background:#fff;color:var(--pri)}.btn.bad{background:#fff;color:var(--bad);border-color:var(--bad)}.btn.sm{padding:3px 12px;font-size:.9rem}
+.btn:focus-visible,.tab:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #7FB5B1;outline-offset:2px}
+input,select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;width:100%}
+input[type=checkbox]{width:auto}
+label{display:block;font-size:.9rem;color:var(--mut);margin:10px 0 2px}
+summary{cursor:pointer}
+.badge{display:inline-block;padding:0 10px;border-radius:99px;font-size:.85rem;background:var(--pri2);color:var(--pri)}
+.badge.warn{background:var(--warn2);color:var(--warn)}.badge.bad{background:var(--bad2);color:var(--bad)}
+.muted{color:var(--mut)}.err{color:var(--bad);min-height:1.5em;margin:6px 0}
+.item{padding:6px 0;border-top:1px solid var(--line)}.item:first-of-type{border-top:0}
+.path{display:flex;margin:14px 0 6px}
+.node{flex:1;text-align:center;position:relative;padding:0 4px}
+.node i{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;margin:0 auto 6px;border:2px solid var(--line);background:#fff;font-style:normal;font-weight:600;position:relative;z-index:1}
+.node:not(:last-child)::after{content:"";position:absolute;top:19px;inset-inline-start:50%;width:100%;height:3px;background:var(--line)}
+.node.done i{background:var(--pri);border-color:var(--pri);color:#fff}.node.done::after{background:var(--pri)!important}
+.node.cur i{border-color:var(--pri);color:var(--pri);box-shadow:0 0 0 4px var(--pri2)}
+#toast{position:fixed;bottom:20px;inset-inline:16px;max-width:420px;margin:auto;background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s;text-align:center}
+#toast.show{opacity:1}#toast.bad{background:var(--bad)}
+dialog{border:1px solid var(--line);border-radius:12px;width:90%;max-width:380px;font:inherit;color:var(--ink)}
+dialog::backdrop{background:rgba(23,38,47,.45)}
+@media(prefers-reduced-motion:reduce){#toast{transition:none}}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module">
+import * as A from './members-api.js'
+
+const $ = (s, r = document) => r.querySelector(s), app = $('#app')
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+const fmt = d => d ? new Date(d).toLocaleDateString('en-GB') : '—'
+const ROLE = { admin: 'أدمن', coordinator: 'مسؤول', member: 'عضو' }
+const TYPE = { video: 'فيديو', pdf: 'PDF', link: 'رابط' }
+const empty = t => `<p class="card muted">${t}</p>`
+const safeUrl = u => /^https?:\/\//i.test(u || '')
+let me, programs = [], program, levels = [], unis = [], tab = 0, schUni = '', views = []
+const isAdmin = () => me.roleCode === 'admin'
+
+function toast(m, bad) {
+  const t = $('#toast'); t.textContent = m; t.className = 'show' + (bad ? ' bad' : '')
+  clearTimeout(t._t); t._t = setTimeout(() => t.className = '', 3800)
+}
+async function act(fn, ok) {
+  try { const r = await fn(); if (ok) toast(ok); return { r } } catch (e) { toast(e.message, true) }
+}
+function dlg(title, html) {
+  return new Promise(res => {
+    const d = document.createElement('dialog')
+    d.innerHTML = `<form method="dialog"><h2>${title}</h2>${html}<p></p><div class="row"><button class="btn" value="ok">تأكيد</button><button class="btn ghost" value="" formnovalidate>إلغاء</button></div></form>`
+    d.onclose = () => { const v = d.returnValue === 'ok' ? Object.fromEntries(new FormData(d.querySelector('form'))) : null; d.remove(); res(v) }
+    document.body.append(d); d.showModal()
+  })
+}
+
+// ---------- الدخول ----------
+function login(msg = '') {
+  app.innerHTML = `<div class="wrap narrow"><div class="card"><h1>منصة العهد</h1><p class="muted">الرجاء تسجيل الدخول للمتابعة.</p>
+  <form id="f"><label>البريد الإلكتروني</label><input name="email" type="email" required autocomplete="username">
+  <label>كلمة السر</label><input name="password" type="password" required autocomplete="current-password">
+  <p class="err">${esc(msg)}</p><button class="btn">دخول</button></form></div></div>`
+  $('#f').onsubmit = async e => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target))
+    try { await A.signIn(f.email.trim(), f.password); boot() } catch { login('البريد الإلكتروني أو كلمة السر غير صحيحة') }
+  }
+}
+
+async function boot() {
+  const { data: { session } } = await A.supabase.auth.getSession()
+  if (!session) return login()
+  try { me = await A.getMyProfile() } catch (e) { await A.signOut(); return login(e.message) }
+  if (me.is_active === false) { await A.signOut(); return login('الحساب غير مفعّل، الرجاء التواصل مع الإدارة.') }
+  try {
+    if (me.roleCode !== 'member') unis = await A.listUniversities()
+    await reload()
+  } catch (e) { app.innerHTML = `<div class="wrap">${empty(esc(e.message))}</div>` }
+}
+
+async function reload(id) {
+  programs = await A.listPrograms()
+  program = programs.find(p => p.id === id) || programs.find(p => p.is_published) || programs[0]
+  levels = program ? await A.listLevels(program.id) : []
+  shell()
+}
+
+function shell() {
+  const names = isAdmin() ? ['الأعضاء', 'المواعيد', 'البرنامج'] : me.roleCode === 'coordinator' ? ['الأعضاء', 'المواعيد'] : ['مستواي']
+  views = isAdmin() ? [vMembers, vSchedule, vProgram] : me.roleCode === 'coordinator' ? [vMembers, vSchedule] : [vMember]
+  if (tab >= names.length) tab = 0
+  app.innerHTML = `<div class="wrap"><header><div><h1>منصة العهد</h1><span class="muted">${esc(me.full_name)}</span> <span class="badge">${ROLE[me.roleCode] || ''}</span></div>
+  <div class="row">${programs.length > 1 ? `<select id="ps" style="width:auto" aria-label="البرنامج">${programs.map(p => `<option value="${p.id}" ${p.id === program?.id ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</select>` : ''}
+  <button class="btn ghost" id="out">خروج</button></div></header>
+  <nav class="tabs" role="tablist">${names.map((t, i) => `<button class="tab" role="tab" aria-selected="${i === tab}" data-i="${i}">${t}</button>`).join('')}</nav><section id="v"></section></div>`
+  $('#out').onclick = async () => { await A.signOut(); login() }
+  if ($('#ps')) $('#ps').onchange = e => reload(e.target.value)
+  $('.tabs').onclick = e => { const b = e.target.closest('.tab'); if (b) { tab = +b.dataset.i; shell() } }
+  render()
+}
+
+async function render() {
+  const v = $('#v'); v.innerHTML = '<p class="muted">جارٍ التحميل…</p>'; v.onclick = v.onsubmit = null
+  try { await views[tab](v) } catch (e) { v.innerHTML = `<p class="err">${esc(e.message)}</p>` }
+}
+
+// ---------- مواد ----------
+const matsHtml = list => list.length ? list.map(m => `<div class="item"><span class="badge">${TYPE[m.material_type] || ''}</span> ${safeUrl(m.external_url) ? `<a href="${esc(m.external_url)}" target="_blank" rel="noopener">${esc(m.title)}</a>` : esc(m.title)}${m.description ? `<div class="muted">${esc(m.description)}</div>` : ''}</div>`).join('') : '<p class="muted">لا توجد مواد بعد.</p>'
+
+// ---------- العضو ----------
+async function vMember(v) {
+  if (!program) return v.innerHTML = empty('لا يوجد برنامج منشور حالياً.')
+  const [ml, sch, mats] = await Promise.all([A.listMemberLevels(program.id), A.getSchedule(), A.listMaterials(program.id)])
+  const mx = Math.max(0, ...ml.map(x => x.attempt)), rows = ml.filter(x => x.attempt === mx)
+  const cur = rows.find(x => x.status === 'in_progress'), done = new Set(rows.filter(x => x.status === 'passed').map(x => x.level_id))
+  const end = cur && (cur.extended_until || cur.due_at), late = end && new Date(end) < new Date()
+  let head
+  if (cur) head = `<h2>المستوى ${cur.program_levels.level_number}: ${esc(cur.program_levels.title)}</h2><p>الموعد النهائي: <b>${fmt(end)}</b> ${late ? '<span class="badge bad">انتهى الوقت، يلزم التواصل مع المسؤول للتمديد</span>' : cur.extended_until ? '<span class="badge warn">تم التمديد</span>' : ''}</p>`
+  else if (done.size) head = '<h2>تم إكمال البرنامج</h2>'
+  else head = '<h2>لم يبدأ البرنامج بعد</h2><p class="muted">سيتم بدء البرنامج من قبل المسؤول.</p>'
+  const path = levels.map(l => { const s = sch.find(x => x.level_id === l.id); return `<div class="node ${done.has(l.id) ? 'done' : cur?.level_id === l.id ? 'cur' : ''}"><i>${done.has(l.id) ? '✓' : l.level_number}</i><div>${esc(l.title)}</div><small class="muted">${s ? fmt(s.starts_on) + ' – ' + fmt(s.ends_on) : ''}</small></div>` }).join('')
+  const groups = levels.map(l => ({ l, m: mats.filter(m => m.level_id === l.id) })).filter(g => g.m.length)
+  const free = mats.filter(m => !m.level_id)
+  v.innerHTML = `<div class="card">${head}<div class="path">${path}</div></div>
+  ${groups.map(g => `<div class="card"><h2>مواد المستوى ${g.l.level_number}</h2>${matsHtml(g.m)}</div>`).join('')}
+  ${free.length ? `<div class="card"><h2>مواد عامة</h2>${matsHtml(free)}</div>` : ''}
+  ${mats.length ? '' : empty('لا توجد مواد متاحة حالياً.')}`
+}
+
+// ---------- الأعضاء (مسؤول وأدمن) ----------
+const addForm = () => `<details class="card"><summary><b>إضافة عضو</b></summary><form id="af">
+  <label>الاسم الكامل</label><input name="full_name" required>
+  <label>البريد الإلكتروني</label><input name="email" type="email" required>
+  <label>كلمة سر مؤقتة (8 أحرف على الأقل)</label><input name="password" minlength="8" required>
+  ${isAdmin() ? `<label>الجامعة</label><select name="university_id" required>${unis.map(u => `<option value="${u.id}">${esc(u.name_ar || u.name)}</option>`).join('')}</select>
+  <label>الدور</label><select name="role"><option value="member">عضو</option><option value="coordinator">مسؤول</option></select>` : ''}
+  <p></p><button class="btn">إضافة</button></form></details>`
+
+async function vMembers(v) {
+  if (!program) return v.innerHTML = empty('لا يوجد برنامج بعد.' + (isAdmin() ? ' يمكن إضافته من تبويب «البرنامج».' : ''))
+  const list = await A.listMembersWithLevel(program.id)
+  const uni = id => { const u = unis.find(x => x.id === id); return u ? u.name_ar || u.name : '' }
+  const card = m => {
+    const c = m.currentLevel, end = c && (c.extended_until || c.due_at), late = end && new Date(end) < new Date(), u = `data-u="${m.user_id}"`
+    return `<div class="card"><div class="row between"><div><b>${esc(m.full_name)}</b><div class="muted">${esc(m.email)}</div>${isAdmin() ? `<div class="muted">${esc(uni(m.university_id))}</div>` : ''}</div>
+    <div>${c ? `<span class="badge ${late ? 'bad' : ''}">المستوى ${c.program_levels.level_number}</span> <span class="muted">حتى ${fmt(end)}</span> ${late ? '<span class="badge bad">انتهى الوقت</span>' : ''}` : '<span class="badge warn">لم يبدأ</span>'}</div></div>
+    <div class="row" style="margin-top:8px">${c ? `<button class="btn sm" data-a="pass" ${u}>نجح</button><button class="btn sm ghost" data-a="fail" ${u}>لم ينجح</button><button class="btn sm ghost" data-a="ext" ${u}>تمديد</button><button class="btn sm bad" data-a="re" ${u}>إعادة من البداية</button>` : `<button class="btn sm" data-a="start" ${u}>بدء البرنامج</button>`}</div></div>`
+  }
+  v.innerHTML = addForm() + (list.length ? list.map(card).join('') : empty('لا يوجد أعضاء بعد.'))
+  v.onsubmit = async e => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); f.email = f.email.trim()
+    if (await act(() => A.addMember(f), 'تمت إضافة العضو')) render()
+  }
+  v.onclick = async e => {
+    const b = e.target.closest('[data-a]'); if (!b) return
+    const u = b.dataset.u, p = program.id, a = b.dataset.a; let ok
+    if (a === 'start') ok = await act(() => A.startMemberProgram(u, p), 'تم بدء البرنامج')
+    else if (a === 'pass' || a === 'fail') {
+      ok = await act(() => A.recordTestResult(u, p, a === 'pass'))
+      if (ok) toast({ next_level: 'تم تسجيل النجاح وفتح المستوى التالي', program_completed: 'تم تسجيل النجاح، وبذلك اكتمل البرنامج', not_passed: 'تم تسجيل عدم النجاح، والمستوى كما هو' }[ok.r] || 'تم')
+    } else if (a === 'ext') {
+      const f = await dlg('تمديد الوقت', '<label>التمديد حتى</label><input type="date" name="d" required>')
+      if (f) ok = await act(() => A.extendMemberTime(u, p, f.d + 'T23:59:00Z'), 'تم تمديد الوقت')
+    } else if (a === 're') {
+      if (confirm('سيتم إعادة العضو من بداية البرنامج. هل تريدون المتابعة؟')) ok = await act(() => A.restartMemberProgram(u, p), 'تمت الإعادة من البداية')
+    }
+    if (ok) render()
+  }
+}
+
+// ---------- المواعيد ----------
+async function vSchedule(v) {
+  if (!levels.length) return v.innerHTML = empty('لا توجد مستويات بعد.')
+  const sch = await A.getSchedule()
+  if (isAdmin() && !schUni) schUni = unis[0]?.id || ''
+  const uid = isAdmin() ? schUni : me.university_id
+  v.innerHTML = (isAdmin() ? `<label>الجامعة</label><select id="su">${unis.map(u => `<option value="${u.id}" ${u.id === uid ? 'selected' : ''}>${esc(u.name_ar || u.name)}</option>`).join('')}</select><p></p>` : '') +
+    levels.map(l => { const s = sch.find(x => x.level_id === l.id && x.university_id === uid) || {}
+      return `<form class="card" data-l="${l.id}"><b>المستوى ${l.level_number}: ${esc(l.title)}</b><div class="row"><div><label>البداية</label><input type="date" name="starts_on" value="${s.starts_on || ''}" required></div><div><label>النهاية</label><input type="date" name="ends_on" value="${s.ends_on || ''}" required></div></div><p></p><button class="btn sm">حفظ</button></form>` }).join('')
+  if ($('#su')) $('#su').onchange = e => { schUni = e.target.value; render() }
+  v.onsubmit = async e => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target))
+    await act(() => A.saveSchedule({ level_id: e.target.dataset.l, starts_on: f.starts_on, ends_on: f.ends_on, university_id: isAdmin() ? uid : undefined }), 'تم حفظ المواعيد')
+  }
+}
+
+// ---------- البرنامج (أدمن) ----------
+async function vProgram(v) {
+  const mats = program ? await A.listMaterials(program.id) : []
+  const used = new Set(levels.map(l => l.level_number)), free = [1, 2, 3].filter(n => !used.has(n))
+  v.innerHTML = `${program ? `<div class="card"><h2>${esc(program.title)}</h2><span class="badge ${program.is_published ? '' : 'warn'}">${program.is_published ? 'منشور' : 'غير منشور'}</span><p class="muted">${esc(program.description)}</p></div>` : ''}
+  ${levels.map(l => `<div class="card"><b>المستوى ${l.level_number}: ${esc(l.title)}</b>${matsHtml(mats.filter(m => m.level_id === l.id))}</div>`).join('')}
+  ${program && free.length ? `<details class="card"><summary><b>إضافة مستوى</b></summary><form data-f="level"><label>رقم المستوى</label><select name="level_number">${free.map(n => `<option>${n}</option>`).join('')}</select><label>العنوان</label><input name="title" required><p></p><button class="btn">إضافة</button></form></details>` : ''}
+  ${levels.length ? `<details class="card"><summary><b>إضافة مادة</b></summary><form data-f="material"><label>المستوى</label><select name="level_id">${levels.map(l => `<option value="${l.id}">المستوى ${l.level_number}</option>`).join('')}</select>
+  <label>العنوان</label><input name="title" required><label>النوع</label><select name="material_type"><option value="video">فيديو</option><option value="pdf">PDF</option><option value="link">رابط</option></select>
+  <label>الرابط (يبدأ بـ https://)</label><input name="external_url" type="url" required><label>وصف (اختياري)</label><input name="description">
+  <label><input type="checkbox" name="is_published" checked> منشورة للأعضاء</label><p></p><button class="btn">إضافة</button></form></details>` : ''}
+  <details class="card" ${program ? '' : 'open'}><summary><b>برنامج جديد</b></summary><form data-f="program"><label>العنوان</label><input name="title" required><label>الوصف</label><input name="description">
+  <div class="row"><div><label>البداية (اختياري)</label><input type="date" name="start_date"></div><div><label>النهاية (اختياري)</label><input type="date" name="end_date"></div></div>
+  <label><input type="checkbox" name="is_published" checked> منشور للأعضاء</label><p></p><button class="btn">إضافة</button></form></details>`
+  v.onsubmit = async e => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)), pub = !!f.is_published, k = e.target.dataset.f; let ok
+    if (k === 'program') { ok = await act(() => A.createProgram({ title: f.title, description: f.description, start_date: f.start_date || null, end_date: f.end_date || null, is_published: pub }), 'تمت إضافة البرنامج'); if (ok) return reload(ok.r.id) }
+    if (k === 'level') { ok = await act(() => A.createLevel({ program_id: program.id, level_number: +f.level_number, title: f.title }), 'تمت إضافة المستوى'); if (ok) return reload(program.id) }
+    if (k === 'material') { ok = await act(() => A.addMaterial({ program_id: program.id, level_id: f.level_id, title: f.title, description: f.description || null, material_type: f.material_type, external_url: f.external_url, file_path: null, is_published: pub }), 'تمت إضافة المادة'); if (ok) render() }
+  }
+}
+
+boot()
+</script>
+</body>
+</html>
